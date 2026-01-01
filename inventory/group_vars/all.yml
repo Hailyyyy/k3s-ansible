@@ -4,7 +4,6 @@ admin_user: admin
 # k3s server endpoint (Control Plane)
 k3s_url: "https://192.168.0.61:6443"
 
-# 반드시 너의 토큰으로 교체
 k3s_token: "K1000192462c7dd1bd83ade9655484bedd7ad9ddde94f3afe12ec0fd87c4a1215e3::server:17be3820d41e006f74649474e4a46a60"
 
 # SSH 키 경로 (admin 계정 기준)
