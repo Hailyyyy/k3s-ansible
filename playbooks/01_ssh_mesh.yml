@@ -1,0 +1,98 @@
+---
+############################
+# 1) wk2 SSH 키 생성 + 공개키 수집
+############################
+- name: Prepare SSH key on new worker (wk2) and collect pubkey
+  hosts: k3s_worker_new
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Ensure .ssh directory exists (wk2)
+      ansible.builtin.file:
+        path: "/home/{{ admin_user }}/.ssh"
+        state: directory
+        owner: "{{ admin_user }}"
+        group: "{{ admin_user }}"
+        mode: "0700"
+
+    - name: Generate SSH key on wk2 if missing
+      ansible.builtin.command: >
+        ssh-keygen -t ed25519 -N "" -f {{ ssh_key_path }}
+      args:
+        creates: "{{ ssh_key_path }}"
+      become_user: "{{ admin_user }}"
+
+    - name: Read wk2 public key
+      ansible.builtin.slurp:
+        src: "{{ ssh_pub_path }}"
+      register: wk2_pub
+
+    - name: Save wk2 pubkey as host fact
+      ansible.builtin.set_fact:
+        wk2_pubkey: "{{ wk2_pub.content | b64decode | trim }}"
+
+############################
+# 2) cp / wk1 SSH 키 생성 + 공개키 수집
+############################
+- name: Ensure SSH key on existing nodes (cp/wk1) and collect pubkeys
+  hosts: k3s_cp:k3s_workers_existing
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Ensure .ssh directory exists (cp/wk1)
+      ansible.builtin.file:
+        path: "/home/{{ admin_user }}/.ssh"
+        state: directory
+        owner: "{{ admin_user }}"
+        group: "{{ admin_user }}"
+        mode: "0700"
+
+    - name: Generate SSH key on cp/wk1 if missing
+      ansible.builtin.command: >
+        ssh-keygen -t ed25519 -N "" -f {{ ssh_key_path }}
+      args:
+        creates: "{{ ssh_key_path }}"
+      become_user: "{{ admin_user }}"
+
+    - name: Read public key on cp/wk1
+      ansible.builtin.slurp:
+        src: "{{ ssh_pub_path }}"
+      register: self_pub
+
+    - name: Save cp/wk1 pubkey as host fact
+      ansible.builtin.set_fact:
+        self_pubkey: "{{ self_pub.content | b64decode | trim }}"
+
+############################
+# 3) wk2 -> (cp/wk1) 접속 허용
+############################
+- name: Allow wk2 to SSH into existing nodes (cp/wk1)
+  hosts: k3s_cp:k3s_workers_existing
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Install wk2 pubkey into cp/wk1 authorized_keys
+      ansible.posix.authorized_key:
+        user: "{{ admin_user }}"
+        key: "{{ hostvars[groups['k3s_worker_new'][0]].wk2_pubkey }}"
+        state: present
+
+############################
+# 4) (cp/wk1) -> wk2 접속 허용
+############################
+- name: Allow existing nodes (cp/wk1) to SSH into wk2
+  hosts: k3s_worker_new
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Install cp/wk1 pubkeys into wk2 authorized_keys
+      ansible.posix.authorized_key:
+        user: "{{ admin_user }}"
+        key: "{{ hostvars[item].self_pubkey }}"
+        state: present
+      loop: "{{ groups['k3s_cp'] + groups['k3s_workers_existing'] }}"
+

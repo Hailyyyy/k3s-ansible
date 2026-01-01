@@ -1,0 +1,6 @@
+---
+- import_playbook: 00_cloud_init.yml
+- import_playbook: 01_ssh_mesh.yml
+- import_playbook: 02_sudo.yml
+- import_playbook: 03_join_worker.yml
+# - import_playbook: 04_verify_cluster.yml

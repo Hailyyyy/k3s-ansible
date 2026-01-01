@@ -1,0 +1,5 @@
+- name: Configure cloud-init behavior
+  hosts: all
+  become: true
+  roles:
+    - cloud_init

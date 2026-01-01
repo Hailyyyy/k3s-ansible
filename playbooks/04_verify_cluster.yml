@@ -1,0 +1,120 @@
+---
+- name: Verify k3s cluster after joining new worker
+  hosts: k3s_cp
+  become: true
+  gather_facts: false
+
+  vars:
+    kubeconfig: /etc/rancher/k3s/k3s.yaml
+    new_node: "{{ k3s_new_node_name }}"
+    test_pod: "{{ k3s_verify_test_pod }}"
+    test_image: "nginx:alpine"
+    pod_cidr_prefix: "10.42."
+    allowed_status_regex: "^(Running|Completed)$"
+
+  environment:
+    KUBECONFIG: "{{ kubeconfig }}"
+
+  tasks:
+    - name: Wait until new node appears
+      ansible.builtin.command: kubectl get node "{{ new_node }}"
+      register: node_exists
+      retries: 45
+      delay: 4
+      until: node_exists.rc == 0
+      changed_when: false
+
+    - name: Wait until new node is Ready
+      ansible.builtin.shell: |
+        set -euo pipefail
+        kubectl get node "{{ new_node }}" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}'
+      args:
+        executable: /bin/bash
+      register: node_ready
+      retries: 60
+      delay: 4
+      until: node_ready.stdout.strip() == "True"
+      changed_when: false
+
+    - name: Check kube-system pods are healthy (Running/Completed only)
+      ansible.builtin.shell: |
+        set -euo pipefail
+        bad=$(kubectl get pods -n kube-system --no-headers | awk '{print $3}' | egrep -v '{{ allowed_status_regex }}' || true)
+        if [ -n "$bad" ]; then
+          echo "[FAIL] Found unhealthy pod statuses in kube-system:"
+          kubectl get pods -n kube-system -o wide
+          exit 1
+        fi
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    - name: Apply test pod manifest (force schedule to new node)
+      ansible.builtin.shell: |
+        set -euo pipefail
+        cat <<'EOF' | kubectl apply -f -
+        apiVersion: v1
+        kind: Pod
+        metadata:
+          name: {{ test_pod }}
+        spec:
+          restartPolicy: Never
+          nodeSelector:
+            kubernetes.io/hostname: "{{ new_node }}"
+          containers:
+            - name: nginx
+              image: {{ test_image }}
+              command: ["sh", "-c", "sleep 3600"]
+        EOF
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    - name: Wait until test pod is Running
+      ansible.builtin.shell: |
+        set -euo pipefail
+        kubectl get pod "{{ test_pod }}" -o jsonpath='{.status.phase}'
+      args:
+        executable: /bin/bash
+      register: pod_phase
+      retries: 45
+      delay: 2
+      until: pod_phase.stdout.strip() == "Running"
+      changed_when: false
+
+    - name: Confirm test pod scheduled on new node
+      ansible.builtin.shell: |
+        set -euo pipefail
+        node=$(kubectl get pod "{{ test_pod }}" -o jsonpath='{.spec.nodeName}')
+        echo "$node"
+        test "$node" = "{{ new_node }}"
+      args:
+        executable: /bin/bash
+      register: scheduled_node
+      changed_when: false
+
+    - name: Verify pod got expected Pod CIDR IP (10.42.x.x)
+      ansible.builtin.shell: |
+        set -euo pipefail
+        ip=$(kubectl get pod "{{ test_pod }}" -o jsonpath='{.status.podIP}')
+        echo "$ip"
+        echo "$ip" | grep -E '^{{ pod_cidr_prefix | regex_escape }}'
+      args:
+        executable: /bin/bash
+      register: pod_ip_check
+      changed_when: false
+
+    - name: Exec ip addr inside test pod (evidence)
+      ansible.builtin.command: kubectl exec "{{ test_pod }}" -- ip addr
+      register: pod_ip_addr
+      changed_when: false
+
+    - name: Print ip addr output
+      ansible.builtin.debug:
+        var: pod_ip_addr.stdout_lines
+
+  always:
+    - name: Cleanup test pod
+      ansible.builtin.command: kubectl delete pod "{{ test_pod }}" --ignore-not-found=true
+      changed_when: false
+

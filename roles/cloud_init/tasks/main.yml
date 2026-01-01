@@ -1,0 +1,16 @@
+# roles/cloud_init/tasks/main.yml
+
+- name: Disable cloud-init update_etc_hosts module
+  become: true
+  ansible.builtin.replace:
+    path: /etc/cloud/cloud.cfg
+    regexp: '^(\s*-\s*update_etc_hosts\s*)$'
+    replace: '# \1'
+
+- name: Disable manage_etc_hosts in cloud.cfg
+  become: true
+  ansible.builtin.replace:
+    path: /etc/cloud/cloud.cfg
+    regexp: '^(manage_etc_hosts:\s*)true'
+    replace: '\1false'
+
