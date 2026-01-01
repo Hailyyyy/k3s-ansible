@@ -1,0 +1,27 @@
+name: Ansible CI
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+
+jobs:
+  ansible-check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Ansible
+        run: |
+          sudo apt update
+          sudo apt install -y ansible
+
+      - name: Ansible syntax check
+        run: |
+          ansible-playbook -i inventory/hosts.ini playbooks/site.yml --syntax-check
+
+      - name: Ansible dry-run check
+        run: |
+          ansible-playbook -i inventory/hosts.ini playbooks/site.yml --check
